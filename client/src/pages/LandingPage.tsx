@@ -204,11 +204,13 @@ export default function LandingPage() {
               added = true;
               return;
             }
-            const j = await resp.json().catch(() => ({}));
-            // fallback to local queue
-            toast({ title: "Added to queue (local)", description: j?.error ?? `Could not add to Spotify: ${resp.status}` });
+                const j = await resp.json().catch(() => ({}));
+                // fallback to local queue
+                const errDesc = typeof j?.error === "string" ? j.error : JSON.stringify(j?.error ?? j ?? `Could not add to Spotify: ${resp.status}`);
+                toast({ title: "Added to queue (local)", description: errDesc });
           } catch (e: any) {
-            toast({ title: "Added to queue (local)", description: e?.message ?? String(e) });
+                const desc = typeof e?.message === "string" ? e.message : JSON.stringify(e ?? String(e));
+                toast({ title: "Added to queue (local)", description: desc });
           }
         }
       } catch (err) {
@@ -242,11 +244,13 @@ export default function LandingPage() {
           if (resp.ok) {
             toast({ title: "Playing on Spotify", description: `"${song.title}" should start playing on the connected Spotify device.` });
           } else {
-            const j = await resp.json().catch(() => ({}));
-            toast({ title: "Play failed", description: j?.error ?? `Could not play on Spotify: ${resp.status}`, variant: "destructive" });
+                  const j = await resp.json().catch(() => ({}));
+                  const desc = typeof j?.error === "string" ? j.error : JSON.stringify(j?.error ?? j ?? `Could not play on Spotify: ${resp.status}`);
+                  toast({ title: "Play failed", description: desc, variant: "destructive" });
           }
         } catch (e: any) {
-          toast({ title: "Play failed", description: e?.message ?? String(e), variant: "destructive" });
+                const desc = typeof e?.message === "string" ? e.message : JSON.stringify(e ?? String(e));
+                toast({ title: "Play failed", description: desc, variant: "destructive" });
         }
       })();
     }

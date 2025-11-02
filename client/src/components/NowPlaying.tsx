@@ -182,10 +182,12 @@ function PlayButton({ spotifyUri, appUserId }: { spotifyUri?: string; appUserId?
             toast({ title: "Playing on Spotify", description: "Attempting to play on performer Spotify account" });
           } else {
             const json = await resp.json().catch(() => ({}));
-            toast({ title: "Spotify play failed", description: json?.error ?? "Could not start playback", variant: "destructive" });
+            const desc = typeof json?.error === "string" ? json.error : JSON.stringify(json?.error ?? json ?? "Could not start playback");
+            toast({ title: "Spotify play failed", description: desc, variant: "destructive" });
           }
         } catch (e: any) {
-          toast({ title: "Spotify play error", description: e?.message ?? String(e), variant: "destructive" });
+          const desc = typeof e?.message === "string" ? e.message : JSON.stringify(e ?? String(e));
+          toast({ title: "Spotify play error", description: desc, variant: "destructive" });
         }
       }}
       className="px-2 py-1 rounded bg-spotify text-white"

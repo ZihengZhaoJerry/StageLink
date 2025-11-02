@@ -399,6 +399,21 @@ router.get("/status", async (req: Request, res: Response) => {
   return res.status(200).json({ connected: true, spotify_user_id: tokenObj.spotify_user_id, display_name });
 });
 
+// Debug endpoint: return lightweight token metadata for one or all users (no secrets)
+router.get("/debug", (req: Request, res: Response) => {
+  const { userId } = req.query as { userId?: string };
+
+  if (userId) {
+    const t = userTokens.get(userId) ?? null;
+    if (!t) return res.status(200).json({ connected: false });
+    return res.status(200).json({ connected: true, spotify_user_id: t.spotify_user_id ?? null, expires_at: t.expires_at ?? null });
+  }
+
+  // list all known user token metadata (do not expose tokens)
+  const list = Array.from(userTokens.entries()).map(([uid, tok]) => ({ userId: uid, spotify_user_id: tok.spotify_user_id ?? null, expires_at: tok.expires_at ?? null }));
+  return res.status(200).json({ users: list, performerConnected: Boolean(performerTokens) });
+});
+
 // Disconnect performer or user tokens: clear tokens
 router.post("/disconnect", (req: Request, res: Response) => {
   const { userId } = req.query as { userId?: string };
