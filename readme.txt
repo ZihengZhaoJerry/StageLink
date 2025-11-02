@@ -1,0 +1,1 @@
+Aim to finish the playing song feature and polish the UI/UX
