@@ -71,6 +71,9 @@ export default function LandingPage() {
   const [nowPlaying, setNowPlaying] = useState<UISong | null>(null);
   const [spotifyStatus, setSpotifyStatus] = useState<{ connected: boolean; display_name?: string } | null>(null);
   const [appUserId, setAppUserId] = useState<string | null>(null);
+  const [audioProgress, setAudioProgress] = useState(0);
+  const [audioDuration, setAudioDuration] = useState(0);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
 
   const eventId = "stormheck2025"; // Use the same eventId as in QRCodePage
 
@@ -138,6 +141,38 @@ export default function LandingPage() {
       }
     })();
   }, [appUserId]);
+
+  // Reset progress when nowPlaying changes
+  useEffect(() => {
+    setAudioProgress(0);
+    setAudioDuration(0);
+    if (audioRef.current) {
+      audioRef.current.currentTime = 0;
+      audioRef.current.pause();
+    }
+  }, [nowPlaying]);
+
+  // Attach listeners to update progress
+  useEffect(() => {
+    const audio = audioRef.current;
+    if (!audio) return;
+    const onTimeUpdate = () => setAudioProgress(audio.currentTime);
+    const onLoadedMetadata = () => setAudioDuration(audio.duration);
+    audio.addEventListener("timeupdate", onTimeUpdate);
+    audio.addEventListener("loadedmetadata", onLoadedMetadata);
+    return () => {
+      audio.removeEventListener("timeupdate", onTimeUpdate);
+      audio.removeEventListener("loadedmetadata", onLoadedMetadata);
+    };
+  }, [nowPlaying]);
+
+  // Helper to format seconds as mm:ss
+  function formatTime(sec: number) {
+    if (!isFinite(sec)) return "0:00";
+    const m = Math.floor(sec / 60);
+    const s = Math.floor(sec % 60);
+    return `${m}:${s.toString().padStart(2, "0")}`;
+  }
 
   const emptyState = useMemo(() => {
     if (!searchQuery.trim()) {
@@ -408,14 +443,49 @@ export default function LandingPage() {
           <TabsContent value="now-playing">
             <div className="max-w-3xl mx-auto">
               {nowPlaying ? (
-                <NowPlaying
-                  title={nowPlaying.title}
-                  artist={nowPlaying.artist}
-                  album={nowPlaying.album}
-                  albumArt={nowPlaying.albumArt}
-                  previewUrl={nowPlaying.previewUrl} // <-- pass previewUrl
-                  spotifyUri={nowPlaying.uri}
-                />
+                <>
+                  <NowPlaying
+                    title={nowPlaying.title}
+                    artist={nowPlaying.artist}
+                    album={nowPlaying.album}
+                    albumArt={nowPlaying.albumArt}
+                    previewUrl={nowPlaying.previewUrl}
+                    spotifyUri={nowPlaying.uri}
+                  />
+                  {/* Song progress panel */}
+                  {nowPlaying.previewUrl && (
+                    <div className="mt-6">
+                      <audio
+                        ref={audioRef}
+                        src={nowPlaying.previewUrl}
+                        autoPlay
+                        controls={false}
+                        onEnded={() => setAudioProgress(audioDuration)}
+                        style={{ display: "none" }}
+                      />
+                      <div className="flex items-center gap-3">
+                        <span className="text-xs text-muted-foreground w-10 text-right">
+                          {formatTime(audioProgress)}
+                        </span>
+                        <div className="flex-1 h-2 bg-muted rounded overflow-hidden">
+                          <div
+                            className="bg-primary h-2"
+                            style={{
+                              width:
+                                audioDuration > 0
+                                  ? `${(audioProgress / audioDuration) * 100}%`
+                                  : "0%",
+                              transition: "width 0.2s linear",
+                            }}
+                          />
+                        </div>
+                        <span className="text-xs text-muted-foreground w-10 text-left">
+                          {formatTime(audioDuration)}
+                        </span>
+                      </div>
+                    </div>
+                  )}
+                </>
               ) : (
                 <EmptyState
                   icon={ListMusic}
