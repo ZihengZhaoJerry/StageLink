@@ -1,6 +1,6 @@
 // server/lib/spotify.ts
 import { Router, Request, Response } from "express";
-import { randomUUID } from "crypto";
+import { randomUUID, createHmac, timingSafeEqual } from "crypto";
 
 const SPOTIFY_BASE_URL = "https://api.spotify.com/v1";
 
@@ -24,7 +24,52 @@ let performerTokens: {
 const userTokens = new Map<string, { access_token: string; refresh_token: string; expires_at: number; spotify_user_id?: string }>();
 
 // server-side OAuth state map to prevent trusting client-provided state payloads
+// We prefer HMAC-signed state (stateless) when SPOTIFY_OAUTH_STATE_SECRET is set.
 const oauthStates = new Map<string, { userId?: string | null; createdAt: number }>();
+
+const STATE_SECRET = process.env.SPOTIFY_OAUTH_STATE_SECRET || process.env.SESSION_SECRET || null;
+const STATE_MAX_AGE_MS = 1000 * 60 * 10; // 10 minutes
+
+function base64urlEncode(buf: Buffer) {
+  return buf.toString("base64").replace(/=+$/g, "").replace(/\+/g, "-").replace(/\//g, "_");
+}
+
+function base64urlDecode(str: string) {
+  str = str.replace(/-/g, "+").replace(/_/g, "/");
+  // pad
+  while (str.length % 4) str += "=";
+  return Buffer.from(str, "base64");
+}
+
+function signState(payload: Record<string, any>) {
+  if (!STATE_SECRET) return null;
+  const json = JSON.stringify(payload);
+  const body = Buffer.from(json);
+  const sig = createHmac("sha256", STATE_SECRET).update(body).digest();
+  return `${base64urlEncode(body)}.${base64urlEncode(sig)}`;
+}
+
+function verifyState(signed: string) {
+  if (!STATE_SECRET) return null;
+  const parts = signed.split(".");
+  if (parts.length !== 2) return null;
+  try {
+    const body = base64urlDecode(parts[0]);
+    const sig = base64urlDecode(parts[1]);
+    const expected = createHmac("sha256", STATE_SECRET).update(body).digest();
+    // timing safe compare
+    if (sig.length !== expected.length) return null;
+    if (!timingSafeEqual(sig, expected)) return null;
+    const payload = JSON.parse(body.toString("utf8"));
+    // check timestamp
+    if (typeof payload.createdAt === "number") {
+      if (Date.now() - payload.createdAt > STATE_MAX_AGE_MS) return null;
+    }
+    return payload;
+  } catch (e) {
+    return null;
+  }
+}
 
 // router is declared below once before routes
 
@@ -98,10 +143,17 @@ router.get("/login", (req: Request, res: Response) => {
   // allow caller to pass a userId so we can associate the Spotify account with that user
   const { userId } = req.query as { userId?: string };
 
-  // Generate a short opaque state id and store server-side to avoid trusting arbitrary client values
-  const stateId = randomUUID();
-  oauthStates.set(stateId, { userId: userId ?? null, createdAt: Date.now() });
-  const state = stateId;
+  // Prefer HMAC-signed state (stateless) when possible, otherwise fall back to server-side map
+  const payload = { userId: userId ?? null, createdAt: Date.now() };
+  const signed = signState(payload);
+  let state: string;
+  if (signed) {
+    state = signed;
+  } else {
+    const stateId = randomUUID();
+    oauthStates.set(stateId, payload);
+    state = stateId;
+  }
 
   // Allow callers to opt into forcing the consent dialog via ?show_dialog=1. Default: no forced dialog.
   const showDialog = (req.query.show_dialog as string | undefined) === "1" ? "true" : undefined;
@@ -135,13 +187,20 @@ router.get("/callback", async (req: Request, res: Response) => {
     const stateParam = req.query.state as string | undefined;
     let stateUserId: string | null = null;
     if (stateParam) {
+      // legacy: check in-memory states first
       const stored = oauthStates.get(stateParam);
       if (stored) {
         stateUserId = stored.userId ?? null;
         // one-time use
         oauthStates.delete(stateParam);
       } else {
-        console.warn("Spotify callback received unknown or expired state id", stateParam);
+        // try verifying signed state
+        const payload = verifyState(stateParam);
+        if (payload) {
+          stateUserId = payload.userId ?? null;
+        } else {
+          console.warn("Spotify callback received unknown or expired state id", stateParam);
+        }
       }
     }
 
@@ -248,6 +307,18 @@ async function refreshTokenIfNeededForTokenObj(tokenObj: { access_token: string;
   if (json.refresh_token) tokenObj.refresh_token = json.refresh_token; // occasionally returned
 }
 
+// Helper: list available devices for a user token
+async function listDevices(access_token: string) {
+  try {
+    const resp = await fetch(`${SPOTIFY_BASE_URL}/me/player/devices`, { headers: { Authorization: `Bearer ${access_token}` } });
+    if (!resp.ok) return null;
+    const json = await resp.json();
+    return Array.isArray(json.devices) ? json.devices : json.devices ?? null;
+  } catch (e) {
+    return null;
+  }
+}
+
 // Play a track on the connected performer's active Spotify device
 router.post("/play", async (req: Request, res: Response) => {
   try {
@@ -283,7 +354,15 @@ router.post("/play", async (req: Request, res: Response) => {
     else if (id) playBody.uris = [`spotify:track:${id}`];
     else return res.status(400).json({ error: "Missing id or uri in body" });
 
-    const resp = await fetch(`${SPOTIFY_BASE_URL}/me/player/play`, {
+    // Always prefer the first available device (force device_id) to improve success rate
+    const devicesInitially = await listDevices(tokenObj.access_token);
+    let playUrl = `${SPOTIFY_BASE_URL}/me/player/play`;
+    if (Array.isArray(devicesInitially) && devicesInitially.length > 0) {
+      const chosen = devicesInitially[0];
+      playUrl += `?device_id=${encodeURIComponent(chosen.id)}`;
+    }
+
+    const resp = await fetch(playUrl, {
       method: "PUT",
       headers: { Authorization: `Bearer ${tokenObj.access_token}`, "Content-Type": "application/json" },
       body: JSON.stringify(playBody),
@@ -305,13 +384,39 @@ router.post("/play", async (req: Request, res: Response) => {
 
     // If 404 with no active device, provide helpful message
     if (resp.status === 404) {
-      return res.status(404).json({ error: "No active Spotify device found. Start Spotify on a device (phone/desktop) and try again.", spotify: parsed });
+  // Try to list devices and include them in the response for debugging
+  const devices = await listDevices(tokenObj.access_token);
+  return res.status(404).json({ error: "No active Spotify device found. Start Spotify on a device (phone/desktop) and try again.", spotify: parsed, devices });
     }
 
     if (!resp.ok) {
       console.error("Play failed:", resp.status, parsed ?? {});
+      // If we got a 403 or other client error, try to discover devices and retry with a device_id
+  const devices = await listDevices(tokenObj.access_token);
+      if (Array.isArray(devices) && devices.length > 0) {
+        const chosen = devices.find((d: any) => d.is_active) ?? devices[0];
+        try {
+          const retryUrl = `${SPOTIFY_BASE_URL}/me/player/play?device_id=${encodeURIComponent(chosen.id)}`;
+          const retry = await fetch(retryUrl, {
+            method: "PUT",
+            headers: { Authorization: `Bearer ${tokenObj.access_token}`, "Content-Type": "application/json" },
+            body: JSON.stringify(playBody),
+          });
+          if (retry.status === 204) return res.status(200).json({ ok: true, retried_with_device: chosen.id });
+          let retryParsed: any = null;
+          try {
+            retryParsed = await retry.json();
+          } catch (e) {
+            retryParsed = await retry.text().catch(() => null);
+          }
+          // return the retry response if it provides more detail
+          return res.status(retry.status).json({ error: retryParsed ?? `Play retry failed: ${retry.status}`, devices });
+        } catch (e) {
+          // fall through and return original error with devices
+        }
+      }
       // Forward the Spotify status and body to the client for easier debugging
-      return res.status(resp.status).json({ error: parsed ?? `Play failed: ${resp.status}` });
+      return res.status(resp.status).json({ error: parsed ?? `Play failed: ${resp.status}`, devices });
     }
 
     res.status(200).json({ ok: true, data: parsed });
@@ -352,7 +457,16 @@ router.post("/enqueue", async (req: Request, res: Response) => {
     const targetUri = uri ?? (id ? `spotify:track:${id}` : undefined);
     if (!targetUri) return res.status(400).json({ error: "Missing id or uri in body" });
 
-    const q = `uri=${encodeURIComponent(targetUri)}` + (device_id ? `&device_id=${encodeURIComponent(device_id)}` : "");
+    // Always prefer the first available device (force device_id) to improve success rate
+    const devicesInitially = await listDevices(tokenObj.access_token);
+    let q = `uri=${encodeURIComponent(targetUri)}`;
+    if (Array.isArray(devicesInitially) && devicesInitially.length > 0) {
+      const chosen = devicesInitially[0];
+      q += `&device_id=${encodeURIComponent(chosen.id)}`;
+    } else if (device_id) {
+      q += `&device_id=${encodeURIComponent(device_id)}`;
+    }
+
     const resp = await fetch(`${SPOTIFY_BASE_URL}/me/player/queue?${q}`, {
       method: "POST",
       headers: { Authorization: `Bearer ${tokenObj.access_token}` },
@@ -373,11 +487,34 @@ router.post("/enqueue", async (req: Request, res: Response) => {
     }
 
     if (resp.status === 404) {
-      return res.status(404).json({ error: "No active Spotify device found. Start Spotify on a device (phone/desktop) and try again.", spotify: parsed });
+      const devices = await listDevices(tokenObj.access_token);
+      return res.status(404).json({ error: "No active Spotify device found. Start Spotify on a device (phone/desktop) and try again.", spotify: parsed, devices });
     }
     if (!resp.ok) {
       console.error("Enqueue failed:", resp.status, parsed ?? {});
-      return res.status(resp.status).json({ error: parsed ?? `Enqueue failed: ${resp.status}` });
+      // Try to fetch devices and retry enqueue with device_id
+      const devices = await listDevices(tokenObj.access_token);
+      if (Array.isArray(devices) && devices.length > 0) {
+        const chosen = devices.find((d: any) => d.is_active) ?? devices[0];
+        try {
+          const retryQ = `uri=${encodeURIComponent(targetUri)}&device_id=${encodeURIComponent(chosen.id)}`;
+          const retry = await fetch(`${SPOTIFY_BASE_URL}/me/player/queue?${retryQ}`, {
+            method: "POST",
+            headers: { Authorization: `Bearer ${tokenObj.access_token}` },
+          });
+          if (retry.status === 204) return res.status(200).json({ ok: true, retried_with_device: chosen.id });
+          let retryParsed: any = null;
+          try {
+            retryParsed = await retry.json();
+          } catch (e) {
+            retryParsed = await retry.text().catch(() => null);
+          }
+          return res.status(retry.status).json({ error: retryParsed ?? `Enqueue retry failed: ${retry.status}`, devices });
+        } catch (e) {
+          // fall through and return original error
+        }
+      }
+      return res.status(resp.status).json({ error: parsed ?? `Enqueue failed: ${resp.status}`, devices });
     }
 
     res.status(200).json({ ok: true, data: parsed });
