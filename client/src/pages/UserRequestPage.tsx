@@ -45,6 +45,15 @@ type UISong = {
   albumArt?: string; // <— add this so SongCard can show the cover
 };
 
+// Example function to add a song to the queue
+async function addSongToQueue(song: UISong, eventId: string) {
+  await fetch(`/api/song-queue`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ ...song, eventId }),
+  });
+}
+
 // ---------- Page ----------
 
 export default function UserRequestPage() {
