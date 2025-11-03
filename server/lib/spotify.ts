@@ -289,19 +289,32 @@ router.post("/play", async (req: Request, res: Response) => {
       body: JSON.stringify(playBody),
     });
 
-  if (resp.status === 204) return res.status(200).json({ ok: true });
-    const json = await resp.json().catch(() => ({}));
+    if (resp.status === 204) return res.status(200).json({ ok: true });
+
+    // Try to parse JSON response, but fall back to text when Spotify returns non-JSON
+    let parsed: any = null;
+    try {
+      parsed = await resp.json();
+    } catch (e) {
+      try {
+        parsed = await resp.text();
+      } catch (e2) {
+        parsed = null;
+      }
+    }
+
     // If 404 with no active device, provide helpful message
     if (resp.status === 404) {
-      return res.status(404).json({ error: "No active Spotify device found. Start Spotify on a device (phone/desktop) and try again." });
+      return res.status(404).json({ error: "No active Spotify device found. Start Spotify on a device (phone/desktop) and try again.", spotify: parsed });
     }
 
     if (!resp.ok) {
-      console.error("Play failed:", resp.status, json);
-      return res.status(500).json({ error: json || `Play failed: ${resp.status}` });
+      console.error("Play failed:", resp.status, parsed ?? {});
+      // Forward the Spotify status and body to the client for easier debugging
+      return res.status(resp.status).json({ error: parsed ?? `Play failed: ${resp.status}` });
     }
 
-    res.status(200).json({ ok: true, data: json });
+    res.status(200).json({ ok: true, data: parsed });
   } catch (err: any) {
     console.error("/play error:", err?.message ?? err);
     res.status(500).json({ error: err?.message ?? String(err) });
@@ -346,16 +359,28 @@ router.post("/enqueue", async (req: Request, res: Response) => {
     });
 
     if (resp.status === 204) return res.status(200).json({ ok: true });
-    const json = await resp.json().catch(() => ({}));
-    if (resp.status === 404) {
-      return res.status(404).json({ error: "No active Spotify device found. Start Spotify on a device (phone/desktop) and try again." });
-    }
-    if (!resp.ok) {
-      console.error("Enqueue failed:", resp.status, json);
-      return res.status(500).json({ error: json || `Enqueue failed: ${resp.status}` });
+
+    // Try to parse JSON response, fallback to text
+    let parsed: any = null;
+    try {
+      parsed = await resp.json();
+    } catch (e) {
+      try {
+        parsed = await resp.text();
+      } catch (e2) {
+        parsed = null;
+      }
     }
 
-    res.status(200).json({ ok: true, data: json });
+    if (resp.status === 404) {
+      return res.status(404).json({ error: "No active Spotify device found. Start Spotify on a device (phone/desktop) and try again.", spotify: parsed });
+    }
+    if (!resp.ok) {
+      console.error("Enqueue failed:", resp.status, parsed ?? {});
+      return res.status(resp.status).json({ error: parsed ?? `Enqueue failed: ${resp.status}` });
+    }
+
+    res.status(200).json({ ok: true, data: parsed });
   } catch (err: any) {
     console.error("/enqueue error:", err?.message ?? err);
     res.status(500).json({ error: err?.message ?? String(err) });
