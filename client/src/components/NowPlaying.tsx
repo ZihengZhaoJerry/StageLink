@@ -142,7 +142,7 @@ export default function NowPlaying({ title, artist, albumArt, album, previewUrl,
               {spotifyConnected ? (
                 <PlayButton spotifyUri={spotifyUri} appUserId={appUserId} />
               ) : (
-                <a href="/api/spotify/login" className="px-2 py-1 rounded bg-foreground/10 text-sm">Connect Spotify</a>
+                <a href={appUserId ? `/api/spotify/login?userId=${encodeURIComponent(appUserId)}` : `/api/spotify/login`} className="px-2 py-1 rounded bg-foreground/10 text-sm">Connect Spotify</a>
               )}
               <span className="text-xs w-10 text-right">{formatTime(currentTime)}</span>
               <input

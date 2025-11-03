@@ -245,8 +245,19 @@ router.get("/callback", async (req: Request, res: Response) => {
     try {
       const meToken = tokenObj.access_token;
       const me = await fetch("https://api.spotify.com/v1/me", { headers: { Authorization: `Bearer ${meToken}` } });
-      const meJson = await me.json();
-      if (me.ok) {
+      let meJson: any = null;
+      try {
+        meJson = await me.json();
+      } catch (parseErr) {
+        // If Spotify returned non-JSON (sometimes returns HTML), capture the text for debugging
+        try {
+          const txt = await me.text();
+          console.warn("Spotify /me returned non-JSON during callback; raw body:", txt.slice(0, 1000));
+        } catch (tErr) {
+          console.warn("Spotify /me returned non-JSON and text read failed");
+        }
+      }
+      if (me.ok && meJson) {
         const idToSet = meJson.id;
         if (stateUserId) {
           const existing = userTokens.get(stateUserId)!;
@@ -256,6 +267,14 @@ router.get("/callback", async (req: Request, res: Response) => {
         } else if (performerTokens) {
           performerTokens.spotify_user_id = idToSet;
           console.log("Connected Spotify performer:", idToSet, meJson.display_name ?? "(no-name)");
+        }
+      } else if (!me.ok) {
+        // Log status and any JSON/text returned for debugging
+        try {
+          const bodyText = await me.text();
+          console.warn(`Spotify /me call during callback failed: ${me.status} ${bodyText.slice(0, 1000)}`);
+        } catch (e) {
+          console.warn("Spotify /me call during callback failed and body could not be read");
         }
       }
     } catch (e) {
@@ -311,7 +330,15 @@ async function refreshTokenIfNeededForTokenObj(tokenObj: { access_token: string;
 async function listDevices(access_token: string) {
   try {
     const resp = await fetch(`${SPOTIFY_BASE_URL}/me/player/devices`, { headers: { Authorization: `Bearer ${access_token}` } });
-    if (!resp.ok) return null;
+    if (!resp.ok) {
+      try {
+        const txt = await resp.text();
+        console.warn(`Spotify /me/player/devices returned ${resp.status}: ${txt.slice(0,1000)}`);
+      } catch (e) {
+        console.warn("Spotify /me/player/devices returned non-ok and body could not be read");
+      }
+      return null;
+    }
     const json = await resp.json();
     return Array.isArray(json.devices) ? json.devices : json.devices ?? null;
   } catch (e) {
@@ -552,8 +579,24 @@ router.get("/status", async (req: Request, res: Response) => {
 
     const me = await fetch(`${SPOTIFY_BASE_URL}/me`, { headers: { Authorization: `Bearer ${tokenObj.access_token}` } });
     if (me.ok) {
-      const j = await me.json();
-      display_name = j.display_name;
+      try {
+        const j = await me.json();
+        display_name = j.display_name;
+      } catch (parseErr) {
+        try {
+          const txt = await me.text();
+          console.warn(`Spotify /me during /status returned non-JSON: ${txt.slice(0,1000)}`);
+        } catch (e) {
+          console.warn("Spotify /me during /status returned non-JSON and body could not be read");
+        }
+      }
+    } else {
+      try {
+        const txt = await me.text();
+        console.warn(`Spotify /me during /status failed: ${me.status} ${txt.slice(0,1000)}`);
+      } catch (e) {
+        console.warn("Spotify /me during /status failed and body could not be read");
+      }
     }
   } catch (e) {
     // ignore
