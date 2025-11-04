@@ -32,6 +32,7 @@ function mapSpotifyTracksToCards(data: any): UISong[] {
     artist: (t.artists ?? []).map((a: any) => a.name).join(", "),
     album: t.album?.name ?? "",
     albumArt: pickImage(t.album?.images ?? []),
+    uri: t.uri,
   }));
 }
 
@@ -43,6 +44,7 @@ type UISong = {
   artist: string;
   album: string;
   albumArt?: string; // <— add this so SongCard can show the cover
+  uri?: string;
 };
 
 // Example function to add a song to the queue
