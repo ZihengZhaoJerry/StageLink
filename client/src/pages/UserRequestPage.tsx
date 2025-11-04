@@ -65,9 +65,17 @@ export default function UserRequestPage() {
   const { toast } = useToast();
   const [submitting, setSubmitting] = useState(false);
   const [location] = useLocation();
-  const params = new URLSearchParams(location.split("?")[1]);
+  // Prefer reading query params from the real browser URL (location from wouter may omit query on some navigations)
+  const params = typeof window !== "undefined" ? new URLSearchParams(window.location.search) : new URLSearchParams(location.split("?")[1]);
   const eventId = params.get("eventId");
   const session = params.get("session");
+
+  // If eventId is missing, show a helpful message and disable submit to avoid 400 from the server
+  useEffect(() => {
+    if (!eventId) {
+      toast({ title: "Invalid request link", description: "This request link is missing an event id. Please scan the QR code again or ask the host for a correct link.", variant: "destructive" });
+    }
+  }, [eventId, toast]);
 
   // simple debounce to avoid spamming your API
   const debounceMs = 350;
@@ -161,6 +169,10 @@ export default function UserRequestPage() {
   // Submit handler
   const submitRequests = async () => {
     if (requestedSongs.length === 0) return;
+    if (!eventId) {
+      toast({ title: "Missing event", description: "Cannot submit requests: missing event id.", variant: "destructive" });
+      return;
+    }
     setSubmitting(true);
     try {
       // Send only the song IDs, or send full song info as needed by your backend
