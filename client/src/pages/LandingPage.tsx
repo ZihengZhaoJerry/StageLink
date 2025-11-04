@@ -278,6 +278,16 @@ export default function LandingPage() {
           });
           if (resp.ok) {
             toast({ title: "Playing on Spotify", description: `"${song.title}" should start playing on the connected Spotify device.` });
+            // remove from server-side queue since it's now playing
+            try {
+              await fetch(`/api/song-queue/remove`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ eventId, songId: song.id }),
+              });
+            } catch {}
+            // update local queue UI
+            setQueue((prev) => prev.filter((s) => s.id !== song.id));
           } else {
                   const j = await resp.json().catch(() => ({}));
                   const desc = typeof j?.error === "string" ? j.error : JSON.stringify(j?.error ?? j ?? `Could not play on Spotify: ${resp.status}`);

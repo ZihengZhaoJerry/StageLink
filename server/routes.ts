@@ -41,6 +41,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
     res.json({ success: true });
   });
 
+  // Remove one or more songs from an event queue
+  app.post("/api/song-queue/remove", (req: Request, res: Response) => {
+    const { eventId, songId, songIds } = req.body;
+    if (!eventId || (!songId && !Array.isArray(songIds))) {
+      return res.status(400).json({ error: "Missing eventId or songId/songIds" });
+    }
+    const idsToRemove = new Set<string>();
+    if (songId) idsToRemove.add(songId);
+    if (Array.isArray(songIds)) songIds.forEach((id: string) => idsToRemove.add(id));
+
+    eventQueues[eventId] = (eventQueues[eventId] || []).filter((s: any) => !idsToRemove.has(s.id));
+    return res.json({ success: true });
+  });
+
   // 404 for unknown API routes
   app.use("/api/*", (_req: Request, res: Response) => {
     res.status(404).json({ error: "Not found" });

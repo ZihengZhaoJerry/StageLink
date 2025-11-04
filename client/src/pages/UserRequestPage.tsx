@@ -208,8 +208,8 @@ export default function UserRequestPage() {
             <ThemeToggle />
       </div>
       <div className="flex flex-1 min-h-0">
-        {/* Left: Search & Results */}
-        <div className="flex-1 border-r max-w-2xl flex flex-col">
+        {/* Left: Search & Results (main column) */}
+        <div className="flex-1 max-w-2xl flex flex-col mx-auto w-full">
           <div className="p-4">
             <SearchBar value={searchQuery} onChange={setSearchQuery} />
           </div>
@@ -233,49 +233,19 @@ export default function UserRequestPage() {
               </div>
             )}
           </div>
-        </div>
-        {/* Right: Queue Panel */}
-        <div className="w-full max-w-md flex flex-col bg-muted/40">
-          <div className="p-4 border-b flex items-center gap-2">
-            <ListMusic className="w-5 h-5" />
-            <span className="font-semibold text-lg">Your Queue</span>
-            <span className="ml-auto text-sm text-muted-foreground">
-              {requestedSongs.length} selected
-            </span>
-          </div>
-          <div className="flex-1 overflow-y-auto p-4">
-            {requestedSongs.length === 0 ? (
-              <EmptyState
-                icon={ListMusic}
-                title="No songs in queue"
-                description="Your selected songs will appear here"
-              />
-            ) : (
-              <div className="space-y-3">
-                {requestedSongObjs.map((song) => (
-                  <SongCard
-                    key={song.id}
-                    id={song.id}
-                    title={song.title}
-                    artist={song.artist}
-                    album={song.album}
-                    albumArt={song.albumArt}
-                    isRequested={true}
-                    onClick={() => handleSongRequest(song.id, song.title)}
-                  />
-                ))}
-              </div>
-            )}
-          </div>
-          <div className="p-4 border-t">
-            <Button
-              className="w-full h-12 text-lg"
-              data-testid="button-submit-requests"
-              disabled={requestedSongs.length === 0 || submitting}
-              onClick={submitRequests}
-            >
-              {submitting ? "Submitting..." : `Submit Requests (${requestedSongs.length})`}
-            </Button>
+          {/* Submit button placed under the search results */}
+          <div className="p-4 border-t w-full max-w-2xl mx-auto">
+            <div className="flex items-center gap-4">
+              <Button
+                className="w-full h-12 text-lg"
+                data-testid="button-submit-requests"
+                disabled={requestedSongs.length === 0 || submitting}
+                onClick={submitRequests}
+              >
+                {submitting ? "Submitting..." : `Submit Requests (${requestedSongs.length})`}
+              </Button>
+              <div className="text-sm text-muted-foreground">{requestedSongs.length} selected</div>
+            </div>
           </div>
         </div>
       </div>
